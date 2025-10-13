@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -32,7 +33,15 @@ type editorConfig struct {
 	cy          int // E.cy is the vertical coordinate (the row)
 	screenrows  int // window size - # rows
 	screencols  int // window size - # cols
+	numrows     int
+	rows        []erow
 	origTermios *term.State
+}
+
+// “editor row” stores a line of text
+type erow struct {
+	size  int
+	chars string
 }
 
 type WinSize struct {
@@ -229,6 +238,34 @@ func getWindowSize(rows, cols *int) int {
 	return 0
 }
 
+/*** file i/o ***/
+
+// editorOpen opens a file and loads it into the editor
+func editorOpen(filename string) {
+	file, err := os.Open(filename)
+	if err != nil {
+		die("open", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Remove carriage returns if present
+		line = strings.TrimRight(line, "\r")
+		row := erow{
+			size:  len(line),
+			chars: line,
+		}
+		E.rows = append(E.rows, row)
+		E.numrows++
+	}
+
+	if err := scanner.Err(); err != nil {
+		die("scanner", err)
+	}
+}
+
 /*** input ***/
 
 // waits for a keypress, and then handles it
@@ -292,25 +329,29 @@ func clearScreen() {
 // handle drawing each row of the buffer of text being edited
 func editorDrawRows(buffer *strings.Builder) {
 	for y := range E.screenrows {
+		if y >= E.numrows {
+			if E.numrows == 0 && y == E.screenrows/3 {
+				welcome := fmt.Sprintf("Kilo editor -- version %s", GIGA_VERSION)
+				welcomelen := min(len(welcome), E.screencols)
 
-		if y == E.screenrows/3 {
-			welcome := fmt.Sprintf("Kilo editor -- version %s", GIGA_VERSION)
-			welcomelen := min(len(welcome), E.screencols)
+				padding := (E.screencols - welcomelen) / 2
+				if padding > 0 {
+					buffer.WriteString("~")
+					padding--
+				}
+				for padding > 0 {
+					buffer.WriteString(" ")
+					padding--
+				}
 
-			padding := (E.screencols - welcomelen) / 2
-			if padding > 0 {
+				// Write only the portion that fits on screen
+				buffer.WriteString(welcome[:welcomelen])
+			} else {
 				buffer.WriteString("~")
-				padding--
 			}
-			for padding > 0 {
-				buffer.WriteString(" ")
-				padding--
-			}
-
-			// Write only the portion that fits on screen
-			buffer.WriteString(welcome[:welcomelen])
 		} else {
-			buffer.WriteString("~")
+			len := min(E.rows[y].size, E.screencols)
+			buffer.WriteString(E.rows[y].chars[:len])
 		}
 
 		buffer.WriteString("\x1b[K") // erases part of the line right of the cursor
@@ -343,6 +384,7 @@ func editorRefreshScreen() {
 func initEditor() {
 	E.cx = 0
 	E.cy = 0
+	E.numrows = 0
 
 	if getWindowSize(&E.screenrows, &E.screencols) == -1 {
 		die("getWindowSize", nil)
@@ -355,6 +397,11 @@ func main() {
 	defer disableRawMode()
 
 	initEditor()
+
+	// Open file if provided as argument
+	if len(os.Args) >= 2 {
+		editorOpen(os.Args[1])
+	}
 
 	for {
 		editorRefreshScreen()

@@ -10,5 +10,5 @@
 ### Setup
 
 ```bash
-go run .
+go run . README.md
 ```
